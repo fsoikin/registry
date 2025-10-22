@@ -74,7 +74,7 @@ mkAuthOrigin address committer = AuthOrigin $ Array.fold
 -- | Run the `git` tool via the command line.
 gitCLI :: Array String -> Maybe FilePath -> Aff (Either String String)
 gitCLI args cwd = do
-  result <- liftAff $ _.getResult =<< Execa.execa "git" args (_ { cwd = cwd })
+  result <- _.getResult =<< Execa.execa "git" args (_ { cwd = cwd })
   pure case result.exit of
     Normally 0 -> Right (String.trim result.stdout)
     _ -> Left (result.stdout <> result.stderr)

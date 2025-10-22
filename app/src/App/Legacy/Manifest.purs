@@ -22,6 +22,7 @@ import Data.String.NonEmpty as NonEmptyString
 import Data.These (These(..))
 import Data.These as These
 import Data.Variant as Variant
+import Debug (spy, traceM)
 import Effect.Aff as Aff
 import Node.ChildProcess.Types (Exit(..))
 import Node.FS.Aff as FS.Aff
@@ -164,6 +165,9 @@ fetchLegacyManifest name address ref = Run.Except.runExceptAt _legacyManifestErr
     let manifestLicenses = These.these unBower unSpago (\bower spago -> unBower bower <> unSpago spago) manifests
     detectedLicenses <- detectLicenses address ref
     let licenses = Array.nub $ Array.concat [ detectedLicenses, manifestLicenses ]
+    traceM "--> After licenses"
+    traceM licenses
+    traceM (validateLicense licenses)
     Run.Except.rethrowAt _legacyManifestError $ validateLicense licenses
 
   let
@@ -248,7 +252,14 @@ detectLicenses address ref = do
   licenseFile <- GitHub.getContent address ref "LICENSE"
   let packageJsonInput = { name: "package.json", contents: _ } <$> hush packageJsonFile
   let licenseInput = { name: "LICENSE", contents: _ } <$> hush licenseFile
-  Run.liftAff (Licensee.detectFiles (Array.catMaybes [ packageJsonInput, licenseInput ])) >>= case _ of
+  traceM "--> detectLicenses 1"
+  let r = do
+        traceM "--> detectLicenses 1.5"
+        x <- try $ Licensee.detectFiles (Array.catMaybes [ packageJsonInput, licenseInput ])
+        traceM "--> detectLicenses 2"
+        traceM x
+        either Aff.throwError pure x
+  Run.liftAff (r) >>= \x -> case spy "detected licenses" x of
     Left err -> Log.warn ("Licensee decoding error, ignoring: " <> err) $> []
     Right licenses -> pure $ Array.mapMaybe NonEmptyString.fromString licenses
 
@@ -438,38 +449,22 @@ fetchLegacyPackageSets = Run.Except.runExceptAt _legacyPackageSetsError do
   -- It's important that we cache the end result of unioning all package sets
   -- because the package sets are quite large and it's expensive to read them
   -- all into memory and fold over them.
-  Cache.get _legacyCache (LegacyUnion tagsHash) >>= case _ of
-    Nothing -> do
-      Log.debug $ "Cache miss for legacy package set union, rebuilding..."
+  Cache.fetch _legacyCache (LegacyUnion tagsHash) do
+    Log.debug $ "Cache miss for legacy package set union, rebuilding..."
 
-      legacySetResults <- for tags \refStr -> do
-        let ref = RawVersion refStr
-        cached <- Cache.get _legacyCache (LegacySet ref) >>= case _ of
-          Nothing -> do
-            Log.debug $ "Cache miss for legacy package set " <> refStr <> ", refetching..."
-            result <- GitHub.getJsonFile Legacy.PackageSet.legacyPackageSetsRepo ref legacyPackageSetCodec "packages.json"
-            Cache.put _legacyCache (LegacySet ref) result
-            pure result
-          Just value ->
-            pure value
-        pure $ lmap (Tuple ref) cached
+    legacySetResults <- for tags \refStr -> do
+      let ref = RawVersion refStr
+      cached <- Cache.fetch _legacyCache (LegacySet ref) do
+        Log.debug $ "Cache miss for legacy package set " <> refStr <> ", refetching..."
+        result <- GitHub.getJsonFile Legacy.PackageSet.legacyPackageSetsRepo ref legacyPackageSetCodec "packages.json"
+        pure result
+      pure $ lmap (Tuple ref) cached
 
-      let results = partitionEithers legacySetResults
-      when (not (Array.null results.fail)) do
-        Log.warn $ "Failed to retrieve package sets for some tags: " <> String.joinWith ", " (map (fst >>> un RawVersion) results.fail)
+    let results = partitionEithers legacySetResults
+    when (not Array.null results.fail) do
+      Log.warn $ "Failed to retrieve package sets for some tags: " <> String.joinWith ", " (map (fst >>> un RawVersion) results.fail)
 
-      let
-        convertedSets :: Array (SemigroupMap PackageName (SemigroupMap RawVersion (SemigroupMap PackageName { min :: Min RawVersion, max :: Max RawVersion })))
-        convertedSets = map convertPackageSet results.success
-
-        merged :: LegacyPackageSetUnion
-        merged = coerce $ fold convertedSets
-
-      Cache.put _legacyCache (LegacyUnion tagsHash) merged
-      pure merged
-
-    Just value ->
-      pure value
+    pure $ coerce $ fold $ convertPackageSet <$> results.success
   where
   _legacyPackageSetsError :: Proxy "legacyPackageSetsError"
   _legacyPackageSetsError = Proxy

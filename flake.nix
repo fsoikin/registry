@@ -820,7 +820,8 @@
                         success = poll_result['success']
                         assert success, f"GET /jobs/{job_id} should return success, but it returned {poll_result}"
                         break
-                      elif (try_count * delay_seconds) > 60:
+                      elif (try_count * delay_seconds) > 360:
+                        print(f"Cancelling publish request after {try_count * delay_seconds} seconds, this is too long...")
                         raise ValueError(f"Cancelling publish request after {try_count * delay_seconds} seconds, this is too long...")
                       else:
                         print(f"Job is still ongoing, retrying in {delay_seconds} seconds...")

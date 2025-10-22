@@ -78,11 +78,17 @@ handle = case _ of
               clonePackageAtTag = do
                 let url = Array.fold [ "https://github.com/", owner, "/", repo ]
                 let args = [ "clone", url, "--branch", ref, "--single-branch", "-c", "advice.detachedHead=false", repoDir ]
-                withRetryOnTimeout (Git.gitCLI args Nothing) >>= case _ of
+                let retry = withRetry defaultRetry { timeout = Aff.Milliseconds 20_000.0 }
+                let cleandir = FS.Aff.rm' repoDir { force: true, recursive: true, maxRetries: 3, retryDelay: 100 }
+                retry (cleandir *> Git.gitCLI args Nothing) >>= case _ of
                   Cancelled -> Aff.throwError $ Aff.error $ "Timed out attempting to clone git tag: " <> url <> " " <> ref
                   Failed err -> Aff.throwError $ Aff.error err
                   Succeeded _ -> pure unit
 
+            Log.debug $ "Dest: " <> destination
+            Log.debug $ "Cloning into " <> repoDir
+            Run.liftAff (try $ FS.Aff.readdir destination) >>= (Log.debug <<< show)
+            Log.debug "After list"
             Run.liftAff (Aff.attempt clonePackageAtTag) >>= case _ of
               Left error -> do
                 Log.error $ "Failed to clone git tag: " <> Aff.message error

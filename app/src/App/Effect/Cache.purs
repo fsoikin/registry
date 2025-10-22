@@ -14,6 +14,7 @@ module Registry.App.Effect.Cache
   , CacheKey(..)
   , get
   , put
+  , fetch
   , delete
   , interpret
   , MemoryFsEnv(..)
@@ -119,6 +120,25 @@ put
   -> a
   -> Run r Unit
 put label key value = Run.lift label (Put (key (Const value)) unit)
+
+fetch
+  :: forall sym q k r a
+   . Functor (k Reply)
+  => Functor (k Ignore)
+  => IsSymbol sym
+  => Row.Cons sym (Cache k) q r
+  => Proxy sym
+  -> CacheKey k a
+  -> Run r a
+  -> Run r a
+fetch label key rebuild =
+  get label key >>= case _ of
+    Just cached ->
+      pure cached
+    Nothing -> do
+      rebuilt <- rebuild
+      put label key rebuilt
+      pure rebuilt
 
 -- | Delete a key from the cache
 delete

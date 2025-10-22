@@ -32,6 +32,7 @@ import Data.String as String
 import Data.String.CodeUnits as String.CodeUnits
 import Data.String.NonEmpty as NonEmptyString
 import Data.String.Regex as Regex
+import Debug (trace, traceM)
 import Effect.Aff as Aff
 import Effect.Ref as Ref
 import JSON as JSON
@@ -442,7 +443,7 @@ publish source payload = do
         Left _ -> Except.throw $ "The provided ref " <> payload.ref <> " is not a version of the form X.Y.Z or vX.Y.Z, so it cannot be used."
         Right result -> pure $ LenientVersion.version result
 
-      Legacy.Manifest.fetchLegacyManifest payload.name address (RawVersion payload.ref) >>= case _ of
+      Legacy.Manifest.fetchLegacyManifest payload.name address (RawVersion payload.ref) >>= \legacyManifest -> trace { legacyManifest } \_ -> case legacyManifest of
         Left manifestError -> do
           let formatError { error, reason } = reason <> " " <> Legacy.Manifest.printLegacyManifestError error
           Except.throw $ String.joinWith "\n"
@@ -460,6 +461,8 @@ publish source payload = do
             ]
           pure manifest
 
+  traceM "--> After manifest creation"
+
   -- We trust the manifest for any changes to the 'owners' field, but for all
   -- other fields we trust the registry metadata.
   let metadata = existingMetadata { owners = manifest.owners }
@@ -472,6 +475,8 @@ publish source payload = do
       , "). The manifest and API request must match."
       ]
 
+  traceM "--> After metadata"
+
   unless (Operation.Validation.locationMatches (Manifest manifest) (Metadata metadata)) do
     Except.throw $ Array.fold
       [ "The manifest file specifies a location ("
@@ -482,8 +487,12 @@ publish source payload = do
       , "submit a transfer operation."
       ]
 
+  traceM "--> After location matches"
+
   when (Operation.Validation.isMetadataPackage (Manifest manifest)) do
     Except.throw "The `metadata` package cannot be uploaded to the registry because it is a protected package."
+
+  traceM "--> After isMetadataPackage"
 
   for_ (Operation.Validation.isNotUnpublished (Manifest manifest) (Metadata metadata)) \info -> do
     Except.throw $ String.joinWith "\n"
@@ -494,6 +503,8 @@ publish source payload = do
       , "```"
       ]
 
+  traceM "--> After isNotUnpublished"
+
   case Operation.Validation.isNotPublished (Manifest manifest) (Metadata metadata) of
     -- If the package has been published already, then we check whether the published
     -- version has made it to Pursuit or not. If it has, then we terminate here. If
@@ -503,8 +514,11 @@ publish source payload = do
         Left error -> Except.throw error
         Right versions -> pure versions
 
+      traceM "--> After getPublishedVersions"
+
       case Map.lookup manifest.version published of
         Just url -> do
+          traceM "--> Existing manifest version"
           Except.throw $ String.joinWith "\n"
             [ "You tried to upload a version that already exists: " <> Version.print manifest.version
             , ""
@@ -541,10 +555,13 @@ publish source payload = do
 
     -- In this case the package version has not been published, so we proceed
     -- with ordinary publishing.
-    Nothing ->
+    Nothing -> do
+      traceM "--> 1"
+
       -- Now that we've verified the package we can write the manifest to the source
       -- directory and then publish it.
       if hadPursJson then do
+        traceM "--> 2"
         -- No need to verify the generated manifest because nothing was generated,
         -- and no need to write a file (it's already in the package source.)
         publishRegistry
@@ -558,6 +575,7 @@ publish source payload = do
           }
 
       else if hasSpagoYaml then do
+        traceM "--> 3"
         -- We need to write the generated purs.json file, but because spago-next
         -- already does unused dependency checks and supports explicit test-only
         -- dependencies we can skip those checks.

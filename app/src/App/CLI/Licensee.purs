@@ -17,7 +17,7 @@ import Registry.Foreign.Tmp as Tmp
 detectFiles :: Array { name :: FilePath, contents :: String } -> Aff (Either String (Array String))
 detectFiles files = do
   tmp <- Tmp.mkTmpDir
-  files # Parallel.parTraverse_ \{ name, contents } ->
+  files # Parallel.parTraverse_ \{ name, contents } -> do
     FS.writeTextFile UTF8 (Path.concat [ tmp, name ]) contents
   detect tmp
 
@@ -43,7 +43,7 @@ detect directory = do
         Left error -> do
           let printedError = CJ.DecodeError.print error
           Left printedError
-        Right out -> do
+        Right out ->
           -- A NOASSERTION result means that a LICENSE file could not be parsed.
           -- For the purposes of the registry we disregard this result, since
           -- we retrieve the license via the package manifest(s) as well.
